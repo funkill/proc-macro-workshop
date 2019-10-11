@@ -17,3 +17,5 @@ trybuild = "1.0"
 
 [dependencies]
 # TODO
+syn = "1.0"
+quote = "1.0"
