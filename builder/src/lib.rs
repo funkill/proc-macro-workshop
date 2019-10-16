@@ -1,12 +1,15 @@
 extern crate proc_macro;
 
-use proc_macro::{TokenStream};
+use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TS;
 
 use quote::{format_ident, quote};
-use syn::{Data, Fields, Field, Type, Ident, PathArguments, GenericArgument};
+use syn::{
+    Attribute, Data, Field, Fields, GenericArgument, Ident, Lit, Meta, NestedMeta, Path,
+    PathArguments, PathSegment, Type,
+};
 
-#[proc_macro_derive(Builder)]
+#[proc_macro_derive(Builder, attributes(builder))]
 pub fn derive(input: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(input as syn::DeriveInput);
 
@@ -23,26 +26,28 @@ pub fn derive(input: TokenStream) -> TokenStream {
         unimplemented!();
     };
 
-    let (names, t): (Vec<Ident>, Vec<(TS, Type)>) = fields.named.into_iter().map(|field: Field| {
-        let inner_ty = wrapped_type(&field.ty);
-        let name = field.ident.unwrap();
-        let (setters, ty) = match inner_ty {
-            Some(ty) => {
-                (quote!(let #name = self.#name.clone();), ty)
-            },
-            None => {
-                (quote!(
-                    let #name = if let Some(#name) = self.#name.clone() {
-                        #name
-                    } else {
-                        return Err(String::from("#name"));
-                    };
+    let (names, t): (Vec<Ident>, Vec<(TS, Type)>) = fields
+        .named
+        .into_iter()
+        .map(|field: Field| {
+            let inner_ty = wrapped_type(&field.ty);
+            let name = field.ident.unwrap();
+            let (setters, ty) = match inner_ty {
+                Some(ty) => (quote!(let #name = self.#name.clone();), ty),
+                None => (
+                    quote!(
+                        let #name = if let Some(#name) = self.#name.clone() {
+                            #name
+                        } else {
+                            return Err(String::from("#name"));
+                        };
+                    ),
+                    field.ty,
                 ),
-                field.ty)
-            }
-        };
-        (name, (setters, ty))
-    }).unzip();
+            };
+            (name, (setters, ty))
+        })
+        .unzip();
 
     let (setters, types): (Vec<TS>, Vec<Type>) = t.into_iter().unzip();
 
@@ -96,4 +101,32 @@ fn wrapped_type(ty: &Type) -> Option<Type> {
     }
 
     None
+}
+
+fn setter_name(attrs: &[Attribute]) -> Option<Lit> {
+    for attr in attrs {
+        if !is_path_with_name(&attr.path, "builder") {
+            continue;
+        }
+
+        if let Ok(Meta::List(ref meta)) = attr.parse_meta() {
+            if let Some(NestedMeta::Meta(Meta::NameValue(ref nv))) = meta.nested.first() {
+                if !is_path_with_name(&nv.path, "each") {
+                    continue;
+                }
+
+                return Some(nv.lit.clone());
+            }
+        }
+    }
+
+    None
+}
+
+fn is_path_with_name(path: &Path, name: &str) -> bool {
+    if let Some(PathSegment { ident, .. }) = path.segments.first() {
+        ident == name
+    } else {
+        false
+    }
 }
